@@ -20,14 +20,16 @@ from system import MODES, NODES
 
 HERE = Path(__file__).resolve().parent
 
-def free_port():
+def find_free_port():
+    """Encontra uma porta TCP local disponível para o laboratório."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
 
 @contextmanager
-def station(directory, faults=None, manual=True, external_publisher=False):
-    mqtt, rpc = free_port(), free_port()
+def station(directory, faults=None, manual=True, open_publisher_terminal=False):
+    """Inicia os processos da estação e os encerra ao sair do contexto."""
+    mqtt, rpc = find_free_port(), find_free_port()
     processes = {}
     env = dict(os.environ, PYTHONUNBUFFERED="1")
     for name in (*NODES, "sensor", "command", "ack"):
@@ -35,6 +37,7 @@ def station(directory, faults=None, manual=True, external_publisher=False):
 
     def start(name, role, *flags):
         # Uma réplica recebe apenas a sua própria chave.
+        """Inicia um componente com acesso apenas às suas credenciais."""
         credentials = {
             "controller": (name,), "sensor": ("sensor",),
             "actuator": ("command", "ack"), "broker": (),
@@ -50,7 +53,8 @@ def station(directory, faults=None, manual=True, external_publisher=False):
         processes[name] = proc
         return proc
 
-    def await_condition(predicate, detail):
+    def wait_until(predicate, detail):
+        """Espera uma condição observável com prazo limitado."""
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             try:
@@ -62,7 +66,8 @@ def station(directory, faults=None, manual=True, external_publisher=False):
             time.sleep(0.08)
         raise TimeoutError(detail)
 
-    def broker_ready():
+    def broker_accepts_mqtt():
+        """Verifica se o broker aceita uma conexão MQTT local."""
         probe = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2)
         try:
             probe.connect("127.0.0.1", mqtt, keepalive=5)
@@ -72,13 +77,13 @@ def station(directory, faults=None, manual=True, external_publisher=False):
 
     try:
         start("broker", "broker")
-        await_condition(broker_ready, "O broker não iniciou")
+        wait_until(broker_accepts_mqtt, "O broker não iniciou")
         for node in NODES:
             fault = (faults or {}).get(node)
             start(node, "controller", "--node", node, *(["--fault", fault] if fault else []))
         start("actuator", "actuator")
         start("middleware", "middleware", *(["--manual"] if manual else []))
-        if external_publisher:
+        if open_publisher_terminal:
             publisher_env = dict(os.environ, SD_KEY_SENSOR=env["SD_KEY_SENSOR"])
             processes["publisher"] = subprocess.Popen(
                 [sys.executable, str(HERE / "demo.py"), "--publisher", str(mqtt)],
@@ -87,9 +92,9 @@ def station(directory, faults=None, manual=True, external_publisher=False):
         else:
             start("sensor", "sensor")
         client = FloodStation(rpc)
-        await_condition(lambda: len(client.status().get("sample", {})) == 3
+        wait_until(lambda: len(client.status().get("sample", {})) == 3
                         and client.status()["status"] == "OK", "Telemetria ou atuador indisponível")
-        yield client, start, processes, await_condition
+        yield client, start, processes, wait_until
     finally:
         for proc in processes.values():
             if proc.poll() is None:
@@ -101,11 +106,13 @@ def station(directory, faults=None, manual=True, external_publisher=False):
                 proc.kill()
                 proc.wait()
 
-def rows(directory, name):
+def count_records(directory, name):
+    """Conta os registros persistidos no diário de um componente."""
     with closing(sqlite3.connect(directory / f"{name}.sqlite")) as db:
         return db.execute("SELECT COUNT(*) FROM journal").fetchone()[0]
 
-def verify():
+def run_verification():
+    """Executa cenários com processos reais e verifica estado, recibos e votos."""
     scenarios = (
         ("normal", {}, "OK"),
         ("queda em plena rodada", {"c1": "crash"}, "OK"),
@@ -121,18 +128,18 @@ def verify():
                 result = client.set_mode("MANUAL_ON", request_id)
                 assert result["status"] == expected, result
                 assert client.status()["pump"] is (expected == "OK")
-                assert rows(directory, "actuator") == (1 if expected == "OK" else 0)
+                assert count_records(directory, "actuator") == (1 if expected == "OK" else 0)
                 if faults.get("c1") == "crash":
                     assert procs["c1"].wait(2) == 17
                 if faults.get("c1") == "wrong":
                     assert result["votes"]["c1"] is False
                 if faults.get("c1") == "forge":
                     assert set(result["votes"]) == {"c2", "c3", "c4"}
-                assert all(rows(directory, node) == 1 for node in NODES)
+                assert all(count_records(directory, node) == 1 for node in NODES)
                 if not faults:
                     assert client.set_mode("MANUAL_ON", request_id)["replayed"] is True
                     assert client.set_mode("MANUAL_OFF", request_id)["status"] == "ID_CONFLICT"
-                    assert rows(directory, "actuator") == 1
+                    assert count_records(directory, "actuator") == 1
                     procs["actuator"].terminate()
                     procs["actuator"].wait(3)
                     start("actuator", "actuator")
@@ -153,7 +160,8 @@ def verify():
             assert wait(lambda: client.status().get("pump") is False, "AUTO não desligou a bomba")
             print("AUTO: bomba ligou no nível alto e desligou no nível baixo.", flush=True)
 
-def interactive():
+def run_interactive_demo():
+    """Oferece um menu de operação e telemetria no mesmo terminal."""
     with tempfile.TemporaryDirectory() as folder:
         with station(Path(folder), manual=False) as (client, start, procs, wait):
             print("Comandos: status, acompanhar, auto, ligar, desligar, chuva, seco, fechar, sair")
@@ -181,7 +189,8 @@ def interactive():
                 else:
                     print("Comando desconhecido.")
 
-def publisher(port):
+def run_publisher_terminal(port):
+    """Troca o cenário publicado pelo sensor MQTT no terminal do publisher."""
     os.system("title Publisher - Estacao de Enchentes")
     scenarios = {
         "chuva": (),
@@ -213,12 +222,13 @@ def publisher(port):
             sensor.terminate()
             sensor.wait(3)
 
-def split():
+def run_split_demo():
+    """Abre um terminal de publicação e exibe a telemetria neste terminal."""
     if os.name != "nt":
         raise SystemExit("O modo --split requer Windows. Use python demo.py neste sistema.")
     os.system("title Monitor - Estacao de Enchentes")
     with tempfile.TemporaryDirectory() as folder:
-        with station(Path(folder), manual=False, external_publisher=True) as (client, _, processes, _):
+        with station(Path(folder), manual=False, open_publisher_terminal=True) as (client, _, processes, _):
             print("Monitor XML-RPC | altere o cenário no Publisher. Ctrl+C encerra.")
             while processes["publisher"].poll() is None:
                 state = client.status()
@@ -237,14 +247,14 @@ if __name__ == "__main__":
     parser.add_argument("--publisher", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.verify:
-        verify()
+        run_verification()
     else:
         try:
             if args.publisher is not None:
-                publisher(args.publisher)
+                run_publisher_terminal(args.publisher)
             elif args.split:
-                split()
+                run_split_demo()
             else:
-                interactive()
+                run_interactive_demo()
         except (KeyboardInterrupt, EOFError):
             pass

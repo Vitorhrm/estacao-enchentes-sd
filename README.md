@@ -49,3 +49,5 @@ O modelo cobre uma réplica silenciosa ou uma réplica divergente entre quatro. 
 
 - [OASIS MQTT 3.1.1, seções 3.3 e 4.3](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)
 - [Eclipse Paho MQTT Python Client](https://eclipse.dev/paho/clients/python/docs/)
+
+[Relatório e roteiro de apresentação](Relatorio-Estacao-de-Enchentes.pdf)
