@@ -13,6 +13,8 @@ import time
 from contextlib import closing, contextmanager
 from uuid import uuid4
 
+import paho.mqtt.client as mqtt_client
+
 from client import FloodStation
 from system import MODES, NODES
 
@@ -61,8 +63,12 @@ def station(directory, faults=None, manual=True):
         raise TimeoutError(detail)
 
     def broker_ready():
-        with socket.create_connection(("127.0.0.1", mqtt), timeout=0.2):
+        probe = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2)
+        try:
+            probe.connect("127.0.0.1", mqtt, keepalive=5)
             return True
+        finally:
+            probe.disconnect()
 
     try:
         start("broker", "broker")
