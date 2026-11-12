@@ -15,6 +15,10 @@ python demo.py --verify
 
 Use um ambiente virtual para instalar as dependências. O demonstrador abre portas livres em 127.0.0.1, cria um banco SQLite por controlador, gera as chaves em memória e encerra os processos ao sair. Para execução direta, `python runtime.py --help` descreve as opções por processo. O código do cliente está em `client.py`.
 
+## Demonstração em dois terminais no Windows
+
+Execute `python demo.py --split`. A janela Monitor atualiza nível, chuva, comporta e bomba a cada segundo. Na janela Publisher, use `seco`, `chuva` ou `fechar` para trocar o cenário MQTT. Para encerrar, digite `sair` no Publisher.
+
 ## Demonstrar em aula
 
 1. Digite `acompanhar` para visualizar chuva, nível, comporta, modo e bomba. Use Ctrl+C para sair do acompanhamento.

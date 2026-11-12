@@ -26,7 +26,7 @@ def free_port():
         return sock.getsockname()[1]
 
 @contextmanager
-def station(directory, faults=None, manual=True):
+def station(directory, faults=None, manual=True, external_publisher=False):
     mqtt, rpc = free_port(), free_port()
     processes = {}
     env = dict(os.environ, PYTHONUNBUFFERED="1")
@@ -78,7 +78,14 @@ def station(directory, faults=None, manual=True):
             start(node, "controller", "--node", node, *(["--fault", fault] if fault else []))
         start("actuator", "actuator")
         start("middleware", "middleware", *(["--manual"] if manual else []))
-        start("sensor", "sensor")
+        if external_publisher:
+            publisher_env = dict(os.environ, SD_KEY_SENSOR=env["SD_KEY_SENSOR"])
+            processes["publisher"] = subprocess.Popen(
+                [sys.executable, str(HERE / "demo.py"), "--publisher", str(mqtt)],
+                env=publisher_env, creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+        else:
+            start("sensor", "sensor")
         client = FloodStation(rpc)
         await_condition(lambda: len(client.status().get("sample", {})) == 3
                         and client.status()["status"] == "OK", "Telemetria ou atuador indisponível")
@@ -174,14 +181,70 @@ def interactive():
                 else:
                     print("Comando desconhecido.")
 
+def publisher(port):
+    os.system("title Publisher - Estacao de Enchentes")
+    scenarios = {
+        "chuva": (),
+        "seco": ("--level", "55", "--rain", "0"),
+        "fechar": ("--closed",),
+    }
+    print("Publisher MQTT | comandos: chuva, seco, fechar, sair")
+    sensor = None
+    try:
+        action = "chuva"
+        while action != "sair":
+            if action in scenarios:
+                if sensor is not None:
+                    sensor.terminate()
+                    sensor.wait(3)
+                sensor = subprocess.Popen(
+                    [sys.executable, str(HERE / "runtime.py"), "sensor",
+                     "--mqtt", str(port), *scenarios[action]],
+                    cwd=tempfile.gettempdir(), stdout=subprocess.DEVNULL,
+                )
+                print(f"Cenário MQTT: {action}")
+            else:
+                print("Use chuva, seco, fechar ou sair.")
+            action = input("publisher> ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        pass
+    finally:
+        if sensor is not None and sensor.poll() is None:
+            sensor.terminate()
+            sensor.wait(3)
+
+def split():
+    if os.name != "nt":
+        raise SystemExit("O modo --split requer Windows. Use python demo.py neste sistema.")
+    os.system("title Monitor - Estacao de Enchentes")
+    with tempfile.TemporaryDirectory() as folder:
+        with station(Path(folder), manual=False, external_publisher=True) as (client, _, processes, _):
+            print("Monitor XML-RPC | altere o cenário no Publisher. Ctrl+C encerra.")
+            while processes["publisher"].poll() is None:
+                state = client.status()
+                sample = state["sample"]
+                pump = "ligada" if state.get("pump") else "desligada"
+                gate = {True: "aberta", False: "fechada"}.get(sample.get("gate_open"), "?")
+                print(f"{time.strftime('%H:%M:%S')} | nível {sample.get('level_cm', '?')} cm | "
+                      f"chuva {sample.get('rain_mm_h', '?')} mm/h | comporta {gate} | "
+                      f"bomba {pump} | {state.get('mode', state['status'])}", flush=True)
+                time.sleep(1)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--split", action="store_true")
+    parser.add_argument("--publisher", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.verify:
         verify()
     else:
         try:
-            interactive()
+            if args.publisher is not None:
+                publisher(args.publisher)
+            elif args.split:
+                split()
+            else:
+                interactive()
         except (KeyboardInterrupt, EOFError):
             pass
