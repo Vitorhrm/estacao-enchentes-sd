@@ -114,13 +114,18 @@ def count_records(directory, name):
 def run_verification():
     """Executa cenários com processos reais e verifica estado, recibos e votos."""
     scenarios = (
-        ("normal", {}, "OK"),
-        ("queda em plena rodada", {"c1": "crash"}, "OK"),
-        ("voto divergente autenticado", {"c1": "wrong"}, "OK"),
-        ("identidade falsificada", {"c1": "forge"}, "OK"),
-        ("perda de quorum", {"c1": "crash", "c2": "wrong"}, "NO_QUORUM"),
+        ("normal", {}, "OK",
+         "Os quatro controladores concordaram. O atuador confirmou o comando, devolveu o mesmo recibo na repetição e recuperou o estado após reiniciar."),
+        ("queda em plena rodada", {"c1": "crash"}, "OK",
+         "C1 gravou o voto e caiu antes de responder. C2, C3 e C4 formaram quórum e o cliente recebeu OK após a confirmação do atuador."),
+        ("voto divergente autenticado", {"c1": "wrong"}, "OK",
+         "C1 enviou um voto válido, mas contrário. Os três votos iguais dos demais controladores formaram quórum."),
+        ("identidade falsificada", {"c1": "forge"}, "OK",
+         "C1 tentou se passar por C2. O HMAC rejeitou a mensagem falsificada e os três votos legítimos formaram quórum."),
+        ("perda de quorum", {"c1": "crash", "c2": "wrong"}, "NO_QUORUM",
+         "C1 caiu e C2 votou contra. Com apenas dois votos a favor, o middleware retornou NO_QUORUM e o atuador registrou zero aplicações. Resultado esperado."),
     )
-    for name, faults, expected in scenarios:
+    for name, faults, expected, explanation in scenarios:
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             with station(directory, faults) as (client, start, procs, wait):
@@ -150,6 +155,7 @@ def run_verification():
                     wait(lambda: client.status()["sample"].get("gate_open") is False, "Comporta")
                     assert client.set_mode("MANUAL_ON")["pump"] is False
                 print(json.dumps({"scenario": name, **result}, ensure_ascii=False), flush=True)
+                print(f"  {explanation}\n", flush=True)
 
     with tempfile.TemporaryDirectory() as folder:
         with station(Path(folder), manual=False) as (client, start, procs, wait):
@@ -159,6 +165,7 @@ def run_verification():
             start("sensor", "sensor", "--level", "55", "--rain", "0")
             assert wait(lambda: client.status().get("pump") is False, "AUTO não desligou a bomba")
             print("AUTO: bomba ligou no nível alto e desligou no nível baixo.", flush=True)
+            print("  O teste mudou os sensores e confirmou as duas transições no estado da bomba.", flush=True)
 
 def run_publisher_terminal(port, rpc_port):
     """Publica cenários MQTT e envia comandos do operador por XML-RPC."""
