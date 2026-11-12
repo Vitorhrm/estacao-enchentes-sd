@@ -16,7 +16,7 @@ from uuid import uuid4
 import paho.mqtt.client as mqtt_client
 
 from client import FloodStation
-from system import MODES, NODES
+from system import NODES
 
 HERE = Path(__file__).resolve().parent
 
@@ -86,7 +86,7 @@ def station(directory, faults=None, manual=True, open_publisher_terminal=False):
         if open_publisher_terminal:
             publisher_env = dict(os.environ, SD_KEY_SENSOR=env["SD_KEY_SENSOR"])
             processes["publisher"] = subprocess.Popen(
-                [sys.executable, str(HERE / "demo.py"), "--publisher", str(mqtt)],
+                [sys.executable, str(HERE / "demo.py"), "--publisher", str(mqtt), str(rpc)],
                 env=publisher_env, creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
         else:
@@ -160,44 +160,19 @@ def run_verification():
             assert wait(lambda: client.status().get("pump") is False, "AUTO não desligou a bomba")
             print("AUTO: bomba ligou no nível alto e desligou no nível baixo.", flush=True)
 
-def run_interactive_demo():
-    """Oferece um menu de operação e telemetria no mesmo terminal."""
-    with tempfile.TemporaryDirectory() as folder:
-        with station(Path(folder), manual=False) as (client, start, procs, wait):
-            print("Comandos: status, acompanhar, auto, ligar, desligar, chuva, seco, fechar, sair")
-            modes = dict(zip(("auto", "ligar", "desligar"), MODES))
-            scenarios = {"chuva": (), "seco": ("--level", "55", "--rain", "0"), "fechar": ("--closed",)}
-            while True:
-                action = input("> ").strip().lower()
-                if action == "sair":
-                    return
-                if action == "status":
-                    print(client.status())
-                elif action == "acompanhar":
-                    try:
-                        while True:
-                            print(client.status())
-                            time.sleep(1)
-                    except KeyboardInterrupt:
-                        print()
-                elif action in modes:
-                    print(client.set_mode(modes[action]))
-                elif action in scenarios:
-                    procs["sensor"].terminate()
-                    procs["sensor"].wait(3)
-                    start("sensor", "sensor", *scenarios[action])
-                else:
-                    print("Comando desconhecido.")
-
-def run_publisher_terminal(port):
-    """Troca o cenário publicado pelo sensor MQTT no terminal do publisher."""
+def run_publisher_terminal(port, rpc_port):
+    """Publica cenários MQTT e envia comandos do operador por XML-RPC."""
     os.system("title Publisher - Estacao de Enchentes")
     scenarios = {
         "chuva": (),
         "seco": ("--level", "55", "--rain", "0"),
         "fechar": ("--closed",),
     }
-    print("Publisher MQTT | comandos: chuva, seco, fechar, sair")
+    modes = {"auto": "AUTO", "ligar": "MANUAL_ON", "desligar": "MANUAL_OFF"}
+    client = FloodStation(rpc_port)
+    print("Sensores MQTT: chuva, seco, fechar")
+    print("Controle XML-RPC: auto, ligar, desligar")
+    print("Encerrar: sair")
     sensor = None
     try:
         action = "chuva"
@@ -212,8 +187,10 @@ def run_publisher_terminal(port):
                     cwd=tempfile.gettempdir(), stdout=subprocess.DEVNULL,
                 )
                 print(f"Cenário MQTT: {action}")
+            elif action in modes:
+                print(client.set_mode(modes[action]))
             else:
-                print("Use chuva, seco, fechar ou sair.")
+                print("Use chuva, seco, fechar, auto, ligar, desligar ou sair.")
             action = input("publisher> ").strip().lower()
     except (KeyboardInterrupt, EOFError):
         pass
@@ -225,7 +202,7 @@ def run_publisher_terminal(port):
 def run_split_demo():
     """Abre um terminal de publicação e exibe a telemetria neste terminal."""
     if os.name != "nt":
-        raise SystemExit("O modo --split requer Windows. Use python demo.py neste sistema.")
+        raise SystemExit("A demonstração em dois terminais requer Windows. Use --verify para rodar os testes neste sistema.")
     os.system("title Monitor - Estacao de Enchentes")
     with tempfile.TemporaryDirectory() as folder:
         with station(Path(folder), manual=False, open_publisher_terminal=True) as (client, _, processes, _):
@@ -243,18 +220,16 @@ def run_split_demo():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify", action="store_true")
-    parser.add_argument("--split", action="store_true")
-    parser.add_argument("--publisher", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--split", action="store_true", help="Abre Publisher e Monitor (modo padrão no Windows)")
+    parser.add_argument("--publisher", type=int, nargs=2, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.verify:
         run_verification()
     else:
         try:
             if args.publisher is not None:
-                run_publisher_terminal(args.publisher)
-            elif args.split:
-                run_split_demo()
+                run_publisher_terminal(*args.publisher)
             else:
-                run_interactive_demo()
+                run_split_demo()
         except (KeyboardInterrupt, EOFError):
             pass

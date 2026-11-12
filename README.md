@@ -8,7 +8,7 @@ Requer Python 3.12. Na pasta do projeto:
 
 ```sh
 python -m pip install -r requirements.txt
-python demo.py
+python demo.py --split
 python -m unittest -v
 python demo.py --verify
 ```
@@ -17,11 +17,11 @@ Use um ambiente virtual para instalar as dependências. O demonstrador abre port
 
 ## Demonstração em dois terminais no Windows
 
-Execute `python demo.py --split`. A janela Monitor atualiza nível, chuva, comporta e bomba a cada segundo. Na janela Publisher, use `seco`, `chuva` ou `fechar` para trocar o cenário MQTT. Para encerrar, digite `sair` no Publisher.
+Execute `python demo.py --split`. A janela Monitor atualiza nível, chuva, comporta e bomba a cada segundo. Na janela Publisher, use `seco`, `chuva` ou `fechar` para trocar o cenário MQTT. No mesmo terminal, use `ligar`, `desligar` ou `auto` para enviar um comando XML-RPC. Para encerrar, digite `sair` no Publisher.
 
 ## Demonstrar em aula
 
-1. Digite `acompanhar` para visualizar chuva, nível, comporta, modo e bomba. Use Ctrl+C para sair do acompanhamento.
+1. Abra os dois terminais e observe chuva, nível, comporta, modo e bomba no Monitor.
 2. Em `AUTO`, use `seco` e aguarde a bomba desligar. Use `chuva` para reativá-la.
 3. Digite `fechar` e depois `ligar`. O controlador mantém a bomba desligada pelo intertravamento.
 4. Execute `python demo.py --verify` para mostrar a queda em plena chamada, o voto divergente, a falsificação de identidade e a recusa por falta de quórum.
